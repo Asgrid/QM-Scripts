@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        const FRAGMENTS = {
+            'fd7caea2ed5124c9c9fec4df3fb311da': 'Square',
+            '90f729fecf743421b92f498926d92cf5': 'Square',
+            'c835bb30d70c6409e97656160c818ea0': 'Triangle',
+            '8eae0e74e5bca468893dbe10c0ec1ada': 'Triangle',
+            '338dc128b866a416fad74e18eaaa0580': 'Circle',
+            '7e1b785b126df44cc8952136306432e5': 'Circle',
+            'b27d291d9dcd64e3586ca96bbe91f2f9': 'Star',
+            'c1fac732bbbd74750b35521c144b6b6d': 'Star',
+            '9658e3b47bbe54095986366c9a0032a8': 'Heart',
+            'a79105d5f861842e4ab1bb52da0b0944': 'Heart',
+            '55d00bf0131c84f9080f955dc83b987f': 'Ellipse',
+            '0a953a0528925423c93baba61a61ac80': 'Ellipse',
+            'b3a81965f941648aa8d4cd9c8a4acba1': 'Diamond',
+            '248528340bdec4a05a5698d51b6d4143': 'Diamond',
+            'f9c96dadb0ee8428988be4155e0c9897': 'Cross',
+            '49bf83ff732874ec39866048423d5371': 'Cross',
+            'f696983818abf4ed3a50a4e78098c9d1': 'Tear',
+            '5b5f9504e291c4852a1f9420733a3f23': 'Tear',
+            '66b78b65cc28545a58a50a68722a82a4': 'Clover',
+            '546b37677382c4b46a445b12773ec955': 'Clover'
+        }
+
+        function find(map){
+            let locations = {};
+            let frag;
+            for (let f in map["Floors"]){
+                if (f =="default") continue;
+                for (let e of map["Floors"][f]['Entities']){
+                    if (e.Group && (e.Group in FRAGMENTS)){
+                        frag = FRAGMENTS[e.Group];
+                        if (!locations[frag]) {
+                            locations[frag] = [];
+                        }
+
+                        locations[frag].push({Floor: f, Position: e.Position});
+                    }
+                }
+            }
+            return locations;
+        }
+
+        function read(){
+            let input = document.getElementById("dngFile");
+            let file = input.files[0];
+
+            if (!file) {
+                return;
+            }
+
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                try {
+                    const text = e.target.result;
+                    const json = JSON.parse(text);
+                    const result = find(json);
+                    showResult(result);
+                } catch (err) {
+                    alert("Error "+err.message);
+                }
+            };
+
+            reader.onerror = function() {
+                alert("Error reading file");
+            };
+
+            reader.readAsText(file);
+        }
+
+        function showResult(locations){
+            let text = "";
+
+            let prevFragment = null;
+            for (let fragment in locations){
+                if (fragment=='default') continue;
+
+                if (prevFragment != fragment){
+                    if (prevFragment != null)
+                        text+="</fieldset>";
+                    text+="<fieldset><legend><b>"+fragment+"</b></legend><ul>";
+                    prevFragment = fragment;
+                }
+                let list = locations[fragment];
+                list.sort((a, b)=>{
+                    if (a.Floor == b.Floor){
+                        if (a.Position.Y == b.Position.Y){
+                            return compare(a.Position.X, b.Position.X);
+                        }
+                        return compare(a.Position.Y, b.Position.Y);
+                    }
+                    return compare(a.Floor, b.Floor);
+                });
+
+                let prevFloor = null;
+                for (let {Floor, Position} of list){
+                    if (prevFloor != Floor){
+                        if (prevFloor != null)
+                            text+="</ul></li>";
+                        text+="<li><b>"+toFloor(Floor)+"</b>:<ul>";
+                        prevFloor = Floor;
+                    }
+
+                    text+=`<li> X: ${Position.X}, Y: ${Position.Y}</li>`;
+                }
+
+                if (prevFloor != null)
+                    text += "</ul></li>";
+
+            }
+            if (prevFragment != null)
+                text+="</ul></fieldset>";
+            else
+                text+="No fragments found.";
+
+            document.getElementById('resultsDiv').innerHTML = text;
+        }
+
+        function compare(a, b) {
+            return parseInt(a) - parseInt(b);
+        }
+
+        function toFloor(floor){
+            let f = parseInt(floor);
+            if (f>=0) {
+                return "F"+(f+1);
+            } else {
+                return "B"+(-f);
+            }
+        }
+    </script>
+    <style>
+        #resultsDiv {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+        }
+        @media (min-width: 1000px) {
+            #resultsDiv {
+                grid-template-columns: 1fr 1fr 1fr 1fr;
+            }
+        }
+        @media (min-width: 750px) and (max-width: 999px) {
+            #resultsDiv {
+                grid-template-columns: 1fr 1fr 1fr;
+            }
+        }
+        @media (min-width: 500px) and (max-width: 749px) {
+            #resultsDiv {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+        @media (max-width: 499px) {
+            #resultsDiv {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <input id="dngFile" type="file" name="dungeon" accept=".dungeon" value="Choose dungeon"><br>
+    <button onclick="read()" type="button">Find fragments</button><br>
+    <p>Result:</p><br>
+    <div style="padding-left: 2rem" id="resultsDiv"></div>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        function decode(base64) {
+            const str = atob(base64);
+            const len = str.length;
+            const bytes = new Uint8Array(len);
+
+            for (let i = 0; i < len; i++) {
+                bytes[i] = str.charCodeAt(i);
+            }
+
+            return bytes;
+        }
+
+        function encode(bytes) {
+            let txt = '';
+            for (let i = 0; i < bytes.length; i++) {
+                txt += String.fromCharCode(bytes[i]);
+            }
+            return btoa(txt);
+        }
+
+        function flip(map, hor, ver){
+            console.log(ver);
+            console.log(hor);
+            map['Name'] = map['Name']+" (Flipped)";
+            for (let f in map["Floors"]){
+                if (f =="default") continue;
+                for (let e of map["Floors"][f]['Entities']){
+                    if (hor){
+                        e['Position']['X'] = -e['Position']['X'];
+                        if (e['Rotation'] == 90) {
+                            e['Rotation'] = 270;
+                        } else if (e['Rotation'] == 270) {
+                            e['Rotation'] = 90;
+                        }
+
+                        if (e['Direction'] == 'Left') {
+                            e['Direction'] = 'Right';
+                        } else if (e['Direction'] == 'Right') {
+                            e['Direction'] = 'Left';
+                        }
+                    }
+                    if (ver) {
+                        e['Position']['Y'] = -e['Position']['Y'];
+                        if (e['Rotation'] == 0) {
+                            e['Rotation'] = 180;
+                        } else if (e['Rotation'] == 180) {
+                            e['Rotation'] = 0;
+                        }
+
+                        if (e['Direction'] == 'Up') {
+                            e['Direction'] = 'Down';
+                        } else if (e['Direction'] == 'Down') {
+                            e['Direction'] = 'Up';
+                        }
+                    }
+                }
+
+                let rooms = map['Floors'][f]['Tilemaps']['Rooms'];
+
+                for (let r of rooms){
+                    if (hor)
+                        r['Bounds']['Position']['X'] = -r['Bounds']['Position']['X'] - r['Bounds']['Size']['X'];
+                    
+                    if (ver)
+                        r['Bounds']['Position']['Y'] = -r['Bounds']['Position']['Y'] - r['Bounds']['Size']['Y'];
+
+                    for (let t in r['Tilemaps']){
+                        if (t =="default") continue;
+                        let b64 = r['Tilemaps'][t];
+                        let tiles = decode(b64);
+                        let tiles2 = decode(b64);
+                        let w = r['Bounds']['Size']['X'];
+                        let h = r['Bounds']['Size']['Y'];
+                        let i=0;
+                        if (hor){
+                            while (i<tiles.length){
+                                for (let x=0; x<w; x++){
+                                    tiles[i+x] = tiles2[i+w-x-1];
+                                }
+                                i+=w;
+                            }
+                            
+                            b64 = encode(tiles);
+                            tiles = decode(b64);
+                            tiles2 = decode(b64);
+                        }
+
+                        if (ver){
+                            for (i=0; i<w; i++){
+                                for (let y=0; y<h; y++){
+                                    tiles[y*w+i] = tiles2[(h-y-1)*w+i];
+                                }
+                            }
+                        }
+
+                        b64 = encode(tiles);
+                        r['Tilemaps'][t] = b64;
+                    }
+                }
+            }
+            return map;
+        }
+
+        function read(){
+            let input = document.getElementById("dngFile");
+            let flipH = document.getElementById("flipX").checked;
+            let flipV = document.getElementById("flipY").checked;
+            let file = input.files[0];
+
+            if (!file) {
+                return;
+            }
+
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                try {
+                    const text = e.target.result;
+                    const json = JSON.parse(text);
+                    const result = flip(json, flipH, flipV);
+                    download(result);
+                } catch (err) {
+                    alert("Error "+err.message);
+                }
+            };
+
+            reader.onerror = function() {
+                alert("Error reading file");
+            };
+
+            reader.readAsText(file);
+        }
+
+        function download(data, name){
+            const jsonString = JSON.stringify(data, null, 2);
+            const blob = new Blob([jsonString], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "flipped.dungeon";
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</head>
+<body>
+    <input id="dngFile" type="file" name="dungeon" accept=".dungeon" value="Choose dungeon"><br>
+    <input id="flipX" type="checkbox" checked="true"> <label for="flipX">Flip horizontally</label><br>
+    <input id="flipY" type="checkbox"> <label for="flipX">Flip vertically</label><br>
+    <button onclick="read()" type="button">Flip</button>
+</body>
+</html>

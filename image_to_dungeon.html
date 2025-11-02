@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        //Turns byte array to base 64 for tilemaps
+        function encode(bytes) {
+            let txt = '';
+            for (let i = 0; i < bytes.length; i++) {
+                txt += String.fromCharCode(bytes[i]);
+            }
+            return btoa(txt);
+        }
+
+        
+        //Palette mode
+        function buildFromPalette(w, h, data, thumbnail){
+            let scale = document.form.scale.value ?? 1;
+            w *= scale;
+            h *= scale;
+
+            //Set of all the tiles used in the map
+            const palette = new Set();
+            let ex, ey;
+            let i = 0, col, pos = 0;
+
+            //Color->Tile dictionary
+            let colorMap = {};
+
+            do {
+                col = document.form.elements['tileCol'+i].value;
+                let type = document.form.elements['tileType'+i].value;
+
+                colorMap[col] = type;
+                palette.add(type);
+
+                i++;
+            } while(document.form.elements['tileType'+i]);
+
+            //List of all tilemaps, one for each layer
+            let maps = {};
+            //Tile->Index dictionary
+            let paletteIDs = {};
+            i = 0;
+            palette.delete("-1"); //Skip "None"
+
+            //Tile dependencies
+            if (palette.has(TILE_REEDS))
+                palette.add(TILE_WATER);
+
+            //Creates a tilemap for each used layer, fills all tiles with 255 (empty tile) by default.
+            for (let p of palette){
+                if (!layers[p]) { //Just in case
+                    console.log("Layer for tile "+p+" not found");
+                    return;
+                }
+
+                maps[layers[p]] = new Uint8Array(w*h);
+                maps[layers[p]].fill(255);
+                paletteIDs[p] = i++;
+            }
+
+            //Maps are stored left to right, bottom to top
+            for (let py = h-1; py>=0; py--) {
+                for (let px = 0; px<w; px++) {
+                    //i = y * w + x,  *4 because byte array contains rgba separately, and /scale to get the original image position
+                    i = (Math.floor(py/scale) * Math.floor(w/scale) * 4) + (Math.floor(px/scale) * 4);
+                    col = toColor(data[i], data[i+1], data[i+2]);
+                    if (col in colorMap) {
+                        let tile = colorMap[col];
+
+                        if (tile == "-1") { //Ignore "None"
+                            pos++;
+                            continue;
+                        }
+
+                        let layer = layers[tile];
+                        if (layer != LAYER_LOWERED_FLOOR) { //All tiles except lowered floor require regular floor underneath them
+                            maps[LAYER_FLOOR][pos] = paletteIDs[TILE_FLOOR];
+                        }
+                        
+                        if (tile == TILE_REEDS) { //Reeds also require water
+                            maps[LAYER_HAZARDS][pos] = paletteIDs[TILE_WATER];
+                        }
+
+                        //Add tile to its respective layer
+                        maps[layer][pos] = paletteIDs[tile];
+
+                        //Use first available floor tile for the entrance position.
+                        //Entrance must be present AND inside a room in order to load the dungeon, this is the easiest way of guaranteeing it.
+                        if (!ex) {
+                            ex = Math.floor(px/scale);
+                            ey = Math.floor((h-py)/scale) + 0.5;
+                        }
+                        pos++;
+                    }
+                }
+            }
+
+            if (!ex) {
+                alert("No floor tiles were placed. Please check image or build mode.");
+                return;
+            }
+
+            //Turn all maps into base64 strings, for each layer key
+            let tilemaps = {};
+            for (let m in maps){
+                if (m == 'default') continue;
+                tilemaps[m] = encode(maps[m]);
+            }
+
+            let dungeon = {
+                Version: document.form.version.value,
+                Thumbnail: thumbnail,
+                Name: "IMG2DNG",
+                Description: "Built from script.",
+                Color: "Red",
+                Tags: [
+                    "95dc23022770d47a69550996b34bb067"
+                ],
+                ModId: null,
+                Favorite: false,
+                Mods: [],
+                Floors: {
+                    "0": {
+                        Theme: "7a77779f7f84e2a49bc3b602f19a4487",
+                        WaterLevel: "Lowered",
+                        Tilemaps: {
+                            Palette: Array.from(palette),
+                            Rooms: [
+                                {
+                                    Bounds: {
+                                        Position: {
+                                            X: -Math.floor(w/2),
+                                            Y: -Math.floor(h/2)
+                                        },
+                                        Size: {
+                                            X: w,
+                                            Y: h
+                                        }
+                                    },
+                                    Tilemaps: tilemaps
+                                }
+                            ],
+                            Offset: {
+                                X: 0,
+                                Y: 0
+                            }
+                        },
+                        Entities: [
+                            {
+                                Entity: "9efc827c402e44adcb48ee66bb65aa9d",
+                                Position: {
+                                    X: ex-Math.floor(w/2),
+                                    Y: ey-Math.floor(h/2)
+                                },
+                                Buffs: [],
+                                Size: {
+                                    X: 5,
+                                    Y: 2
+                                },
+                                IsInvisible: false,
+                                Rotation: 180.0
+                            }
+                        ],
+                        Notes: []
+                    }
+                }
+            };
+            download(dungeon);
+        }
+
+        //Transparency / Brightness mode
+        function build(w, h, data, thumbnail){
+            let scale = document.form.scale.value ?? 1;
+            w *= scale;
+            h *= scale;
+
+            //Create a single array for the map
+            let map = new Uint8Array(w*h);
+            let cutoff = document.form.cutoff.value ?? 127;
+            let normal = !document.form.invert.checked;
+            let i, col, pos = 0;
+            let ex, ey;
+
+            switch (document.form.buildType.value){
+                default: //Transparency
+                    for (let py = h-1; py>=0; py--){
+                        for (let px = 0; px<w; px++){
+                            i = (Math.floor(py/scale) * Math.floor(w/scale) * 4) + (Math.floor(px/scale) * 4) + 3;
+                            if (data[i] >= cutoff){
+                                //Place floor, or empty if inverted
+                                map[pos++] = normal ? 0 : 255;
+                                if (!ex){
+                                    //Set entrance position to first available floor tile
+                                    ex = Math.floor(px/scale);
+                                    ey = Math.floor((h-py)/scale) + 0.5;
+                                }
+                            } else {
+                                //Place empty tile, or floor if inverted
+                                map[pos++] = normal ? 255 : 0;
+                            }
+                        }
+                    }
+                    break;
+                case "2": //Brightness
+                    for (let py = h-1; py>=0; py--){
+                        for (let px = 0; px<w; px++){
+                            i = (Math.floor(py/scale) * Math.floor(w/scale) * 4) + (Math.floor(px/scale) * 4) + 3;
+                            //L = 0.375 R + 0.5 G + 0.125 B
+                            col = (data[i] * 0.375 + data[i+1] * 0.5 + data[i+2] * 0.125);
+                            if (col >= cutoff){
+                                map[pos++] = normal ? 0 : 255;
+                                if (!ex){
+                                    ex = Math.floor(px/scale);
+                                    ey = Math.floor((h-py)/scale) + 0.5;
+                                }
+                            }else{
+                                map[pos++] = normal ? 255 : 0;
+                            }
+                        }
+                    }
+                    break;
+            }
+
+            if (!ex){
+                alert("No floor tiles were placed. Please check image or build mode.");
+                return;
+            }
+
+            //Turn map array into base64 string
+            let tilemap = encode(map);
+
+            let dungeon = {
+                Version: document.form.version.value,
+                Thumbnail: thumbnail,
+                Name: "IMG2DNG",
+                Description: "Built from script.",
+                Color: "Red",
+                Tags: [
+                    "95dc23022770d47a69550996b34bb067"
+                ],
+                ModId: null,
+                Favorite: false,
+                Mods: [],
+                Floors: {
+                    "0": {
+                        Theme: "7a77779f7f84e2a49bc3b602f19a4487",
+                        WaterLevel: "Lowered",
+                        Tilemaps: {
+                            Palette: [
+                                "3b6d8ed1f2a39064e933b3ec73a6eb41"
+                            ],
+                            Rooms: [
+                                {
+                                    Bounds: {
+                                        Position: {
+                                            X: -Math.floor(w/2),
+                                            Y: -Math.floor(h/2)
+                                        },
+                                        Size: {
+                                            X: w,
+                                            Y: h
+                                        }
+                                    },
+                                    Tilemaps:{
+                                        "9f5a235f083938145bf1a286d3f33562": tilemap
+                                    }
+                                }
+                            ],
+                            Offset: {
+                                X: 0,
+                                Y: 0
+                            }
+                        },
+                        Entities: [
+                            {
+                                Entity: "9efc827c402e44adcb48ee66bb65aa9d",
+                                Position: {
+                                    X: ex-Math.floor(w/2),
+                                    Y: ey-Math.floor(h/2)
+                                },
+                                Buffs: [],
+                                Size: {
+                                    X: 5,
+                                    Y: 2
+                                },
+                                IsInvisible: false,
+                                Rotation: 180.0
+                            }
+                        ],
+                        Notes: []
+                    }
+                }
+            };
+            download(dungeon);
+        }
+
+        function read(){
+            let input = document.form.image;
+            let file = input.files[0];
+
+            if (!file) {
+                return;
+            }
+
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                canvas.width = img.width;
+                canvas.height = img.height;
+
+                ctx.drawImage(img, 0, 0);
+
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const pixelData = imageData.data;
+
+                const thumbnail = canvas.toDataURL('image/png').substring(22);
+                if (document.form.buildType.value == "3")
+                    buildFromPalette(img.width, img.height, pixelData, thumbnail);
+                else
+                    build(img.width, img.height, pixelData, thumbnail);
+                // Revoke the object URL to release memory
+                URL.revokeObjectURL(img.src);
+            };
+            img.onerror = function(){
+                alert("Error reading file");
+            };
+            img.src = URL.createObjectURL(file);
+        }
+
+        function download(data){
+            const jsonString = JSON.stringify(data, null, 2);
+            const blob = new Blob([jsonString], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "picture.dungeon";
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function buildTypeUpdate(){
+            let div1 = document.getElementById('divCutoff');
+            let div2 = document.getElementById('divPalette');
+            let t = document.form.buildType.value;
+            switch (t){
+                case "2":
+                    div1.style.display="block";
+                    div2.style.display="none";
+                    document.form.cutoff.value = 127;
+                    updateCutoffPoint();
+                    break;
+                case "3":
+                    div1.style.display="none";
+                    div2.style.display="block";
+                    buildPalette();
+                    break;
+                default:
+                    div1.style.display="block";
+                    div2.style.display="none";
+                    document.form.cutoff.value = 127;
+                    updateCutoffPoint();
+                    break;
+            }
+        }
+
+        function updateCutoffPoint(){
+            document.getElementById('cutoffVal').innerHTML = document.form.cutoff.value;
+        }
+
+        //Gets all colors from an image and makes a list to select their associated tiles
+        function buildPalette(){
+            if (document.form.buildType.value != "3") return;
+            let input = document.form.image;
+            let file = input.files[0];
+            if (!file) {
+                document.getElementById('divPalette').innerHTML = "Select an image to load the palette.";
+                return;
+            }
+
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                canvas.width = img.width;
+                canvas.height = img.height;
+
+                ctx.drawImage(img, 0, 0);
+
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const pixelData = imageData.data;
+
+                let colors = {};
+                for (let i=0; i<pixelData.length; i+=4){
+                    col = toColor(pixelData[i], pixelData[i+1], pixelData[i+2]);
+                    colors[col] = 1;
+                }
+
+                let txt = "";
+                let i=0;
+                for (let c in colors){
+                    if (c=='default') continue;
+                    txt += tileInput(i, c);
+                    i++;
+                }
+                document.getElementById('divPalette').innerHTML = txt;
+                URL.revokeObjectURL(img.src);
+            };
+            img.onerror = function(){
+                alert("Error reading file");
+            };
+            img.src = URL.createObjectURL(file);
+        }
+
+        function toColor(r, g, b) {
+            const rHex = r.toString(16).padStart(2, '0');
+            const gHex = g.toString(16).padStart(2, '0');
+            const bHex = b.toString(16).padStart(2, '0');
+            return `#${rHex}${gHex}${bHex}`;
+        }
+
+        //Tile selector
+        function tileInput(id, color){
+            return `<span style="display: inline-block; width:50px; height:1em; border:1px solid black; background-color: ${color}"></span><select name="tileType${id}">
+                    <option value="-1">None</option>
+                    <option value="${TILE_FLOOR}">Floor</option>
+                    <option value="e646b7c011f1c4458b60c563270b779d">Lowered Floor</option>
+                    <option value="4d6a8fc4a1b8b794992e5a124085b0d2">Pit</option>
+                    <option value="${TILE_WATER}">Water</option>
+                    <option value="cd565fe37b4c7e54aa3d3d2b16c5e2ce">Lava</option>
+                    <option value="0b88f418d5ce54ec887152807e33fb48">Mud</option>
+                    <option value="673655b683c6041df95d43d1a2926578">Ice</option>
+                    <option value="3b76377bcb29b4585a50ae26bb65ee10">Honey</option>
+                    <option value="47a48387e886c7a488f9cb2e623caa0c">Decoration</option>
+                    <option value="a4ab6864420e26f4b9aa250b9a1808a0">Carpet</option>
+                    <option value="bced8eafa5a0a43389bcf215f9d4ab98">Fence</option>
+                    <option value="a46de763ba3577f4780ebe4aa8080252">Solid</option>
+                    <option value="f5bc82073d9fd4b5daa7736639711676">Tall Grass</option>
+                    <option value="${TILE_REEDS}">Reeds</option>
+                    <option value="ecf2a0fbc16eb4ec9b3de986721e8d85">Flowers</option>
+                </select><input type="hidden" name="tileCol${id}" value="${color}"><br>`;
+        }
+
+        const TILE_FLOOR = '3b6d8ed1f2a39064e933b3ec73a6eb41';
+        const TILE_REEDS = 'b94946ed45889418c83acb5c3955e581';
+        const TILE_WATER = 'ca4576136ee31754680859009b86e8b6';
+
+        const LAYER_FLOOR = '9f5a235f083938145bf1a286d3f33562';
+        const LAYER_LOWERED_FLOOR = '8e8ce6a4d1b184258bc9f93eddcb96a8';
+        const LAYER_HAZARDS = '9e0a8dcd17a1a42a08ce84bdf8552937';
+        const LAYER_DECOR = '6a80f4262edfb4e4e8d5bbdb1768f966';
+        const LAYER_CARPET = '0bb86156bf6e0974895328acafc4161c';
+        const LAYER_FENCE = '1997fb9fdd5744626862935ccde4d6e1';
+        const LAYER_SOLID = '1620ca16711a0d64ebf397fd49b5f270';
+
+        const layers = {
+            [TILE_FLOOR]: LAYER_FLOOR,
+            'e646b7c011f1c4458b60c563270b779d': LAYER_LOWERED_FLOOR,
+            [TILE_WATER]: LAYER_HAZARDS,
+            'cd565fe37b4c7e54aa3d3d2b16c5e2ce': LAYER_HAZARDS,
+            '0b88f418d5ce54ec887152807e33fb48': LAYER_HAZARDS,
+            '4d6a8fc4a1b8b794992e5a124085b0d2': LAYER_HAZARDS,
+            '673655b683c6041df95d43d1a2926578': LAYER_HAZARDS,
+            '47a48387e886c7a488f9cb2e623caa0c': LAYER_DECOR,
+            '3b76377bcb29b4585a50ae26bb65ee10': LAYER_DECOR,
+            'a4ab6864420e26f4b9aa250b9a1808a0': LAYER_CARPET,
+            'bced8eafa5a0a43389bcf215f9d4ab98': LAYER_FENCE,
+            'a46de763ba3577f4780ebe4aa8080252': LAYER_SOLID,
+            'f5bc82073d9fd4b5daa7736639711676': LAYER_SOLID,
+            [TILE_REEDS]: LAYER_SOLID,
+            'ecf2a0fbc16eb4ec9b3de986721e8d85': LAYER_SOLID
+        }
+    </script>
+</head>
+<body>
+    <form name="form">
+        <input type="file" name="image" accept="image/*" value="Choose image" onchange="buildPalette()"><br>
+        Dungeon Version: <input type="text" name="version" value="0.11.14.24"><br>
+        Map Scale: x<input type="number" name="scale" value="1" min="1" max="5"><br>
+        Build based on: <select name="buildType" onchange="buildTypeUpdate()">
+            <option value="1">Transparency</option>
+            <option value="2">Brightness</option>
+            <option value="3">Palette</option>
+        </select><br>
+        <div id="divCutoff" style="padding-left: 2rem;">
+            <label style="display:inline-flex; align-items: center;">
+                Cut-off point: <span style="display: inline-block; margin-right:20px; width:40px; text-align: right;" id="cutoffVal">127</span>
+                <input type="range" name="cutoff" min="1" max="255" step="1" value="127" oninput="updateCutoffPoint()">
+            </label><br>
+            <label>
+                Invert output
+                <input type="checkbox" name="invert">
+            </label><br>
+        </div>
+        <div id="divPalette" style="padding-left: 2rem; display:none">
+        </div>
+        <button onclick="read()" type="button">Build</button>
+    </form>
+</body>
+</html>
