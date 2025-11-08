@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        function imageFileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+
+                reader.onload = () => {
+                    resolve(reader.result);
+                };
+
+                reader.onerror = (error) => {
+                    reject(error);
+                };
+
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function read(){
+            let input = document.getElementById("dngFile");
+            let file = input.files[0];
+
+            input = document.getElementById("dngImg");
+            let thumbnail = input.files[0];
+
+            if (!file || !thumbnail) {
+                return;
+            }
+
+            /** @type string*/
+            let str = await imageFileToBase64(thumbnail);
+            const imageData = str.substring(str.indexOf(',')+1);
+            const imageName = thumbnail.name.substring(0, thumbnail.name.indexOf('.'));
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const text = e.target.result;
+                    const json = JSON.parse(text);
+
+                    json.Thumbnail = imageData;
+                    
+                    let fileName = json.Name + '_' + imageName;
+
+                    download(json, fileName);
+                } catch (err) {
+                    alert("Error "+err.message);
+                }
+            };
+
+            reader.onerror = function() {
+                alert("Error reading file");
+            };
+
+            reader.readAsText(file);
+        }
+
+        function download(data, name){
+            const jsonString = JSON.stringify(data, null, 2);
+            const blob = new Blob([jsonString], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = name+".dungeon";
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</head>
+<body>
+    Dungeon: <input id="dngFile" type="file" name="dungeon" accept=".dungeon" value="Choose dungeon"><br>
+    Thumbnail: <input id="dngImg" type="file" name="image" accept="image/*" value="Choose image"><br>
+    <button onclick="read()" type="button">Replace</button>
+</body>
+</html>
