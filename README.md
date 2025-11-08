@@ -11,3 +11,6 @@ Converts a PNG into a dungeon floor, with 3 modes of operation:
 
 ## Fragment finder
 Shows the location of all fragments being used inside a dungeon, across all floors.
+
+## Thumbnail replacer
+Changes a dungeon's thumbnail to the selected image.
